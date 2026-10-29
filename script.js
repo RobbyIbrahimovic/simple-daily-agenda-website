@@ -1,13 +1,24 @@
-// jQuery Interactivity & Client-Side Validation
+// Script.js For Simple Daily Agenda Web App
+function konfirmasiSelesai(judul, tanggalStr) {
+    var tglAgenda = new Date(tanggalStr);
+    var sekarang  = new Date();
+
+    if (tglAgenda > sekarang) {
+        return confirm(
+            "PERINGATAN!\n\n" +
+            "Agenda '" + judul + "' dijadwalkan untuk masa yang mendatang (" + tanggalStr + ").\n\n" +
+            "Apakah Anda YAKIN ingin menandai agenda ini SELESAI lebih awal dari jadwal?"
+        );
+    }
+    return confirm("Tandai agenda '" + judul + "' sebagai Selesai?");
+}
 
 $(document).ready(function () {
 
-    // 1. Bersihkan URL dari parameter ?msg= (Anti Notifikasi Berulang saat Refresh)
     if (window.location.search.includes('msg=')) {
         window.history.replaceState({}, document.title, window.location.pathname);
     }
 
-    // 2. Toggle Form Tambah Agenda (Interactive Slide)
     $("#btnToggleForm").click(function () {
         $("#formSection").slideToggle(350, function () {
             if ($("#formSection").is(":visible")) {
@@ -20,7 +31,7 @@ $(document).ready(function () {
         });
     });
 
-    // Tombol Batal pada Form
+    // Tombol Batal
     $("#btnBatal").click(function () {
         $("#formSection").slideUp(350);
         $("#toggleText").text("Tambah Agenda Baru");
@@ -28,19 +39,16 @@ $(document).ready(function () {
         $("#clientAlert").addClass("d-none");
     });
 
-    // Auto-hide Notifikasi Server PHP setelah 4 Detik
     setTimeout(function () {
         $("#serverAlert").fadeOut("slow");
     }, 4000);
 
-    // Menutup Alert Klien
     $("#btnCloseClientAlert").click(function () {
         $("#clientAlert").addClass("d-none");
     });
 
-    // 3. Validasi Form Sisi Klien (jQuery Client-Side Validation)
     $("#agendaForm").submit(function (e) {
-        var judul = $("#judul_kegiatan").val().trim();
+        var judul   = $("#judul_kegiatan").val().trim();
         var kategori = $("#kategori").val();
         var tanggal = $("#tanggal_kegiatan").val();
 
@@ -55,6 +63,14 @@ $(document).ready(function () {
         } else if (tanggal === "") {
             errorMessage = "Tanggal & Waktu Kegiatan wajib ditentukan!";
             $("#tanggal_kegiatan").focus();
+        } else {
+            var inputDate = new Date(tanggal);
+            var nowDate   = new Date();
+
+            if (inputDate < nowDate) {
+                errorMessage = "Waktu kegiatan tidak boleh di masa lalu! Silakan pilih waktu mendatang.";
+                $("#tanggal_kegiatan").focus();
+            }
         }
 
         if (errorMessage !== "") {

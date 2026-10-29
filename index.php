@@ -1,34 +1,92 @@
+<!-- Index.php - Halaman Utama Aplikasi Agenda Harian -->
 <?php
 require_once 'koneksi.php';
 
 $pesan_sukses = "";
 $pesan_error  = "";
 
-// === HANDLE NOTIFIKASI PESAN DARI REDIRECT (PRG PATTERN) ===
+$is_edit = false;
+$data_edit = [
+    'id' => '',
+    'judul_kegiatan' => '',
+    'kategori' => '',
+    'tanggal_kegiatan' => '',
+    'prioritas' => 'Sedang',
+    'catatan' => ''
+];
+
 if (isset($_GET['msg'])) {
-    if ($_GET['msg'] === 'added') {$pesan_sukses = "Agenda kegiatan baru berhasil ditambahkan!";
-    } elseif ($_GET['msg'] === 'updated') {$pesan_sukses = "Status agenda berhasil diperbarui menjadi Selesai!";
-    } elseif ($_GET['msg'] === 'deleted') {$pesan_sukses = "Agenda berhasil dihapus!";
+    if ($_GET['msg'] === 'added') {
+        $pesan_sukses = "Agenda kegiatan baru berhasil ditambahkan!";
+    } elseif ($_GET['msg'] === 'updated') {
+        $pesan_sukses = "Status agenda berhasil diperbarui menjadi Selesai!";
+    } elseif ($_GET['msg'] === 'updated_future') {
+        $pesan_sukses = "Catatan: Agenda masa depan telah ditandai Selesai lebih awal!";
+    } elseif ($_GET['msg'] === 'uncompleted') {
+        $pesan_sukses = "Status agenda berhasil dikembalikan menjadi Belum Selesai!";
+    } elseif ($_GET['msg'] === 'edited') {
+        $pesan_sukses = "Data agenda berhasil diperbarui!";
+    } elseif ($_GET['msg'] === 'deleted') {
+        $pesan_sukses = "Agenda berhasil dihapus!";
     }
 }
 
-// === PROSES TANDAI SELESAI (UPDATE STATUS) ===
+if (isset($_GET['aksi']) && $_GET['aksi'] === 'edit' && isset($_GET['id'])) {
+    $id_req = (int)$_GET['id'];
+    $stmt_e = mysqli_prepare($koneksi, "SELECT * FROM agenda WHERE id = ?");
+    mysqli_stmt_bind_param($stmt_e, "i", $id_req);
+    mysqli_stmt_execute($stmt_e);
+    $res_e = mysqli_stmt_get_result($stmt_e);
+    if ($row_e = mysqli_fetch_assoc($res_e)) {
+        $is_edit = true;
+        $data_edit = $row_e;
+    }
+    mysqli_stmt_close($stmt_e);
+}
+
 if (isset($_GET['aksi']) && $_GET['aksi'] === 'selesai' && isset($_GET['id'])) {
     $id_agenda = (int)$_GET['id'];
+
+    $stmt_chk = mysqli_prepare($koneksi, "SELECT tanggal_kegiatan FROM agenda WHERE id = ?");
+    mysqli_stmt_bind_param($stmt_chk, "i", $id_agenda);
+    mysqli_stmt_execute($stmt_chk);
+    $res_chk = mysqli_stmt_get_result($stmt_chk);
+    $row_chk = mysqli_fetch_assoc($res_chk);
+    mysqli_stmt_close($stmt_chk);
+
+    if ($row_chk) {
+        $waktu_agenda = strtotime($row_chk['tanggal_kegiatan']);
+        $sekarang = time();
+
+        $stmt = mysqli_prepare($koneksi, "UPDATE agenda SET `status` = 'Selesai' WHERE id = ?");
+        mysqli_stmt_bind_param($stmt, "i", $id_agenda);
+
+        if (mysqli_stmt_execute($stmt)) {
+            $msg = ($waktu_agenda > $sekarang) ? "updated_future" : "updated";
+            header("Location: index.php?msg=" . $msg);
+            exit();
+        } else {
+            $pesan_error = "Gagal memperbarui status agenda.";
+        }
+        mysqli_stmt_close($stmt);
+    }
+}
+
+if (isset($_GET['aksi']) && $_GET['aksi'] === 'batal' && isset($_GET['id'])) {
+    $id_agenda = (int)$_GET['id'];
     
-    $stmt = mysqli_prepare($koneksi, "UPDATE agenda SET `status` = 'Selesai' WHERE id = ?");
+    $stmt = mysqli_prepare($koneksi, "UPDATE agenda SET `status` = 'Belum' WHERE id = ?");
     mysqli_stmt_bind_param($stmt, "i", $id_agenda);
 
     if (mysqli_stmt_execute($stmt)) {
-        header("Location: index.php?msg=updated");
+        header("Location: index.php?msg=uncompleted");
         exit();
     } else {
-        $pesan_error = "Gagal memperbarui status agenda.";
+        $pesan_error = "Gagal mengembalikan status agenda.";
     }
     mysqli_stmt_close($stmt);
 }
 
-// === PROSES HAPUS AGENDA (DELETE) ===
 if (isset($_GET['aksi']) && $_GET['aksi'] === 'hapus' && isset($_GET['id'])) {
     $id_agenda = (int)$_GET['id'];
     
@@ -44,24 +102,34 @@ if (isset($_GET['aksi']) && $_GET['aksi'] === 'hapus' && isset($_GET['id'])) {
     mysqli_stmt_close($stmt);
 }
 
-// === PROSES SUBMIT FORM (PHP SERVER-SIDE VALIDATION & INSERT) ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $id_edit   = isset($_POST['id_edit']) ? (int)$_POST['id_edit'] : 0;
     $judul     = trim($_POST['judul_kegiatan'] ?? '');
     $kategori  = trim($_POST['kategori'] ?? '');
     $tanggal   = trim($_POST['tanggal_kegiatan'] ?? '');
     $prioritas = trim($_POST['prioritas'] ?? 'Sedang');
     $catatan   = trim($_POST['catatan'] ?? '');
 
-    // Validasi Sisi Server (PHP)
+    $waktu_input = strtotime($tanggal);
+    $sekarang    = time();
+
     if (empty($judul) || empty($kategori) || empty($tanggal)) {
         $pesan_error = "Semua kolom dengan tanda bintang (*) wajib diisi!";
+    } elseif ($waktu_input < $sekarang) {
+        $pesan_error = "Waktu kegiatan tidak boleh di masa lalu! Silakan pilih tanggal & waktu mendatang.";
     } else {
-        $stmt = mysqli_prepare($koneksi, "INSERT INTO agenda (judul_kegiatan, kategori, tanggal_kegiatan, prioritas, catatan, `status`) VALUES (?, ?, ?, ?, ?, 'Belum')");
-        mysqli_stmt_bind_param($stmt, "sssss", $judul, $kategori,$tanggal, $prioritas,$catatan);
+        if ($id_edit > 0) {
+            $stmt = mysqli_prepare($koneksi, "UPDATE agenda SET judul_kegiatan = ?, kategori = ?, tanggal_kegiatan = ?, prioritas = ?, catatan = ? WHERE id = ?");
+            mysqli_stmt_bind_param($stmt, "sssssi", $judul, $kategori, $tanggal, $prioritas, $catatan, $id_edit);
+            $redirect_msg = "edited";
+        } else {
+            $stmt = mysqli_prepare($koneksi, "INSERT INTO agenda (judul_kegiatan, kategori, tanggal_kegiatan, prioritas, catatan, `status`) VALUES (?, ?, ?, ?, ?, 'Belum')");
+            mysqli_stmt_bind_param($stmt, "sssss", $judul, $kategori, $tanggal, $prioritas, $catatan);
+            $redirect_msg = "added";
+        }
 
         if (mysqli_stmt_execute($stmt)) {
-            // REDIRECT agar saat F5/Refresh data tidak terkirim ulang (Anti-Duplikat)
-            header("Location: index.php?msg=added");
+            header("Location: index.php?msg=" . $redirect_msg);
             exit();
         } else {
             $pesan_error = "Gagal menyimpan agenda: " . mysqli_error($koneksi);
@@ -70,11 +138,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// === QUERY BACA DATA (LOGIKA TEMA 9: ORDER BY TANGGAL TERDEKAT) ===
 $query_agenda = "SELECT * FROM agenda ORDER BY tanggal_kegiatan ASC";
-$result_agenda = mysqli_query($koneksi,$query_agenda);
+$result_agenda = mysqli_query($koneksi, $query_agenda);
 
-// Hitung rekap kuantitas agenda
 $total_agenda  = 0;
 $total_selesai = 0;
 $total_belum   = 0;
@@ -82,9 +148,10 @@ $total_belum   = 0;
 $data_rows = [];
 if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
     while ($r = mysqli_fetch_assoc($result_agenda)) {
-        $data_rows[] =$r;
+        $data_rows[] = $r;
         $total_agenda++;
-        if ($r['status'] === 'Selesai') {$total_selesai++;
+        if ($r['status'] === 'Selesai') {
+            $total_selesai++;
         } else {
             $total_belum++;
         }
@@ -97,23 +164,19 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agenda Kegiatan Harian - UTS Web App</title>
+    <title>Agenda Kegiatan Harian - Daily Agenda App</title>
     
-    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Bootstrap 5 CSS & Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     
-    <!-- Custom Stylesheet -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <!-- Header Semantik -->
     <header>
         <nav class="navbar navbar-expand-lg navbar-dark navbar-custom py-3">
             <div class="container">
@@ -122,7 +185,6 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
                     <span>AGENDA<span class="text-primary">.SYS</span></span>
                 </a>
                 
-                <!-- Identitas Mahasiswa -->
                 <div class="d-flex align-items-center gap-2">
                     <span class="brand-badge text-white">
                         <i class="bi bi-person-fill text-info me-1"></i> Pengguna Web
@@ -133,10 +195,8 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
         </nav>
     </header>
 
-    <!-- Main Content Semantik -->
     <main class="container my-5">
         
-        <!-- Section Header & Rekap Geometris -->
         <div class="row align-items-center mb-4 g-3">
             <div class="col-lg-6">
                 <h2 class="fw-bold text-dark mb-1 d-flex align-items-center">
@@ -148,12 +208,11 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
             <div class="col-lg-6 text-lg-end">
                 <button id="btnToggleForm" class="btn btn-geo shadow-sm">
                     <i class="bi bi-plus-square-fill me-2" id="iconToggle"></i>
-                    <span id="toggleText">Tambah Agenda Baru</span>
+                    <span id="toggleText"><?= $is_edit ? 'Tutup Form Edit' : 'Tambah Agenda Baru'; ?></span>
                 </button>
             </div>
         </div>
 
-        <!-- Rekap Statistik Agenda -->
         <div class="row g-3 mb-4">
             <div class="col-md-4">
                 <div class="summary-card shadow-sm">
@@ -175,7 +234,6 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
             </div>
         </div>
 
-        <!-- Alert Server (PHP) -->
         <?php if (!empty($pesan_sukses)): ?>
             <div class="alert alert-success alert-dismissible fade show card-geo p-3 mb-4" role="alert" id="serverAlert">
                 <div class="d-flex align-items-center">
@@ -196,7 +254,6 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
             </div>
         <?php endif; ?>
 
-        <!-- Alert Client (jQuery) -->
         <div id="clientAlert" class="alert alert-warning alert-dismissible fade show card-geo d-none p-3 mb-4" role="alert">
             <div class="d-flex align-items-center">
                 <i class="bi bi-exclamation-circle-fill text-warning fs-5 me-2"></i>
@@ -205,64 +262,69 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
             <button type="button" class="btn-close" id="btnCloseClientAlert" aria-label="Close"></button>
         </div>
 
-        <!-- Form Tambah Agenda (Interactive Slide) -->
-        <div id="formSection" class="card-geo mb-5" style="display: none;">
+        <div id="formSection" class="card-geo mb-5" style="<?= $is_edit ? 'display: block;' : 'display: none;'; ?>">
             <div class="card-geo-header">
-                <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-pencil-square me-2 text-primary"></i> Form Input Agenda Baru</h5>
+                <h5 class="fw-bold mb-0 text-dark">
+                    <i class="bi bi-pencil-square me-2 text-primary"></i> 
+                    <?= $is_edit ? 'Edit Agenda Kegiatan' : 'Form Input Agenda Baru'; ?>
+                </h5>
             </div>
             <div class="p-4">
                 <form id="agendaForm" action="index.php" method="POST" novalidate>
+                    <input type="hidden" name="id_edit" value="<?= htmlspecialchars($data_edit['id']); ?>">
+
                     <div class="row g-3">
-                        <!-- Input 1: Judul Kegiatan -->
                         <div class="col-md-6">
                             <label for="judul_kegiatan" class="form-label fw-semibold small">Judul Kegiatan <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="judul_kegiatan" name="judul_kegiatan" placeholder="Contoh: Revisi Laporan ADPL">
+                            <input type="text" class="form-control" id="judul_kegiatan" name="judul_kegiatan" 
+                                   value="<?= htmlspecialchars($data_edit['judul_kegiatan']); ?>" 
+                                   placeholder="Contoh: Revisi Laporan ADPL">
                         </div>
 
-                        <!-- Input 2: Kategori Agenda -->
                         <div class="col-md-6">
                             <label for="kategori" class="form-label fw-semibold small">Kategori <span class="text-danger">*</span></label>
                             <select class="form-select" id="kategori" name="kategori">
                                 <option value="">-- Pilih Kategori --</option>
-                                <option value="Akademik">Akademik / Kuliah</option>
-                                <option value="Organisasi">Organisasi</option>
-                                <option value="Pribadi">Pribadi / Hobi</option>
-                                <option value="Studi Mandiri">Studi Mandiri</option>
+                                <option value="Akademik" <?= $data_edit['kategori'] === 'Akademik' ? 'selected' : ''; ?>>Akademik / Kuliah</option>
+                                <option value="Organisasi" <?= $data_edit['kategori'] === 'Organisasi' ? 'selected' : ''; ?>>Organisasi</option>
+                                <option value="Pribadi" <?= $data_edit['kategori'] === 'Pribadi' ? 'selected' : ''; ?>>Pribadi / Hobi</option>
+                                <option value="Studi Mandiri" <?= $data_edit['kategori'] === 'Studi Mandiri' ? 'selected' : ''; ?>>Studi Mandiri</option>
                             </select>
                         </div>
 
-                        <!-- Input 3: Waktu / Tanggal -->
                         <div class="col-md-6">
                             <label for="tanggal_kegiatan" class="form-label fw-semibold small">Tanggal & Waktu Kegiatan <span class="text-danger">*</span></label>
-                            <input type="datetime-local" class="form-control" id="tanggal_kegiatan" name="tanggal_kegiatan">
+                            <input type="datetime-local" class="form-control" id="tanggal_kegiatan" name="tanggal_kegiatan" 
+                                   value="<?= !empty($data_edit['tanggal_kegiatan']) ? date('Y-m-d\TH:i', strtotime($data_edit['tanggal_kegiatan'])) : ''; ?>">
                         </div>
 
-                        <!-- Input 4: Tingkat Prioritas -->
                         <div class="col-md-6">
                             <label for="prioritas" class="form-label fw-semibold small">Tingkat Prioritas</label>
                             <select class="form-select" id="prioritas" name="prioritas">
-                                <option value="Rendah">Rendah</option>
-                                <option value="Sedang" selected>Sedang</option>
-                                <option value="Tinggi">Tinggi</option>
+                                <option value="Rendah" <?= $data_edit['prioritas'] === 'Rendah' ? 'selected' : ''; ?>>Rendah</option>
+                                <option value="Sedang" <?= $data_edit['prioritas'] === 'Sedang' ? 'selected' : ''; ?>>Sedang</option>
+                                <option value="Tinggi" <?= $data_edit['prioritas'] === 'Tinggi' ? 'selected' : ''; ?>>Tinggi</option>
                             </select>
                         </div>
 
-                        <!-- Input 5: Catatan -->
                         <div class="col-12">
                             <label for="catatan" class="form-label fw-semibold small">Catatan / Detail Lokasi</label>
-                            <textarea class="form-control" id="catatan" name="catatan" rows="3" placeholder="Tambahkan informasi pendukung agenda di sini..."></textarea>
+                            <textarea class="form-control" id="catatan" name="catatan" rows="3" placeholder="Tambahkan informasi pendukung agenda di sini..."><?= htmlspecialchars($data_edit['catatan']); ?></textarea>
                         </div>
 
                         <div class="col-12 text-end mt-4">
-                            <button type="button" id="btnBatal" class="btn btn-geo-outline me-2">Batal</button>
-                            <button type="submit" class="btn btn-geo px-4">Simpan Agenda</button>
+                            <?php if ($is_edit): ?>
+                                <a href="index.php" class="btn btn-geo-outline me-2">Batal Edit</a>
+                            <?php else: ?>
+                                <button type="button" id="btnBatal" class="btn btn-geo-outline me-2">Batal</button>
+                            <?php endif; ?>
+                            <button type="submit" class="btn btn-geo px-4"><?= $is_edit ? 'Perbarui Agenda' : 'Simpan Agenda'; ?></button>
                         </div>
                     </div>
                 </form>
             </div>
         </div>
 
-        <!-- Tabel Riwayat Data Agenda -->
         <div class="card-geo">
             <div class="card-geo-header d-flex align-items-center justify-content-between">
                 <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-list-task me-2 text-primary"></i> Daftar Agenda Terjadwal</h5>
@@ -285,70 +347,77 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
                     <tbody>
                         <?php if (count($data_rows) > 0): ?>
                             <?php $no = 1; ?>
-                            <?php foreach ($data_rows as$row): ?>
+                            <?php foreach ($data_rows as $row): ?>
                                 <?php 
-                                    $waktu_formatted = date('d M Y - H:i', strtotime($row['tanggal_kegiatan']));$priority_class = 'badge-priority-sedang';
-                                    if ($row['prioritas'] === 'Tinggi')$priority_class = 'badge-priority-tinggi';
-                                    if ($row['prioritas'] === 'Rendah')$priority_class = 'badge-priority-rendah';
+                                    $waktu_formatted = date('d M Y - H:i', strtotime($row['tanggal_kegiatan'])); 
+                                    $priority_class = 'badge-priority-sedang';
+                                    if ($row['prioritas'] === 'Tinggi') $priority_class = 'badge-priority-tinggi';
+                                    if ($row['prioritas'] === 'Rendah') $priority_class = 'badge-priority-rendah';
 
                                     $is_selesai = ($row['status'] === 'Selesai');
-                                    $text_style =$is_selesai ? 'text-completed' : '';
+                                    $text_style = $is_selesai ? 'text-completed' : '';
                                 ?>
                                 <tr class="<?= $is_selesai ? 'row-completed' : ''; ?>">
                                     <td class="text-center fw-bold text-muted"><?= $no++; ?></td>
                                     
-                                    <!-- Nama Agenda -->
                                     <td>
                                         <div class="fw-bold <?= $text_style; ?>"><?= htmlspecialchars($row['judul_kegiatan']); ?></div>
                                     </td>
                                     
-                                    <!-- Kategori -->
                                     <td>
                                         <span class="badge badge-kategori rounded-pill px-3 py-1 fw-semibold">
                                             <?= htmlspecialchars($row['kategori']); ?>
                                         </span>
                                     </td>
                                     
-                                    <!-- Tanggal -->
                                     <td>
                                         <div class="small <?= $text_style; ?>">
                                             <i class="bi bi-clock me-1 text-primary"></i> <?= $waktu_formatted; ?> WIB
                                         </div>
                                     </td>
                                     
-                                    <!-- Prioritas -->
                                     <td class="text-center">
                                         <span class="badge <?= $priority_class; ?> rounded-pill px-3 py-1 fw-semibold">
                                             <?= htmlspecialchars($row['prioritas']); ?>
                                         </span>
                                     </td>
                                     
-                                    <!-- Catatan -->
                                     <td>
                                         <span class="small <?= $text_style; ?>">
                                             <?= !empty($row['catatan']) ? htmlspecialchars($row['catatan']) : '-'; ?>
                                         </span>
                                     </td>
-                                    
-                                    <!-- Status / Tombol Selesai & Hapus -->
+
                                     <td class="text-center">
                                         <div class="d-flex justify-content-center align-items-center gap-1">
                                             <?php if ($is_selesai): ?>
-                                                <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-1 fw-bold small">
-                                                    <i class="bi bi-check-circle-fill me-1"></i> Selesai
-                                                </span>
+                                                <a href="index.php?aksi=batal&id=<?= $row['id']; ?>" 
+                                                   class="btn btn-sm btn-success rounded-circle d-inline-flex align-items-center justify-content-center"
+                                                   style="width: 32px; height: 32px;"
+                                                   title="Selesai (Klik untuk kembalikan ke Belum Selesai)"
+                                                   onclick="return confirm('Kembalikan status agenda \'<?= htmlspecialchars(addslashes($row['judul_kegiatan'])); ?>\' menjadi Belum Selesai?');">
+                                                    <i class="bi bi-check-lg"></i>
+                                                </a>
                                             <?php else: ?>
                                                 <a href="index.php?aksi=selesai&id=<?= $row['id']; ?>" 
-                                                   class="btn btn-sm btn-outline-success rounded-pill px-2 py-1 fw-semibold"
+                                                   class="btn btn-sm btn-outline-success rounded-circle d-inline-flex align-items-center justify-content-center"
+                                                   style="width: 32px; height: 32px;"
                                                    title="Tandai Selesai"
-                                                   onclick="return confirm('Tandai agenda \'<?= htmlspecialchars(addslashes($row['judul_kegiatan'])); ?>\' sebagai Selesai?');">
-                                                    <i class="bi bi-check2-circle"></i>
+                                                   onclick="return konfirmasiSelesai('<?= htmlspecialchars(addslashes($row['judul_kegiatan'])); ?>', '<?= $row['tanggal_kegiatan']; ?>');">
+                                                    <i class="bi bi-check2"></i>
                                                 </a>
                                             <?php endif; ?>
 
-                                            <!-- Tombol Hapus Agenda -->
+                                            <a href="index.php?aksi=edit&id=<?= $row['id']; ?>" 
+                                               class="btn btn-sm btn-outline-primary rounded-circle d-inline-flex align-items-center justify-content-center"
+                                               style="width: 32px; height: 32px;"
+                                               title="Edit Agenda">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+
                                             <a href="index.php?aksi=hapus&id=<?= $row['id']; ?>" 
-                                               class="btn btn-sm btn-outline-danger rounded-pill px-2 py-1 fw-semibold"
+                                               class="btn btn-sm btn-outline-danger rounded-circle d-inline-flex align-items-center justify-content-center"
+                                               style="width: 32px; height: 32px;"
                                                title="Hapus Agenda"
                                                onclick="return confirm('Yakin ingin menghapus agenda \'<?= htmlspecialchars(addslashes($row['judul_kegiatan'])); ?>\'?');">
                                                 <i class="bi bi-trash"></i>
@@ -372,7 +441,6 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
 
     </main>
 
-    <!-- Footer Semantik -->
     <footer class="py-4 text-center">
         <div class="container">
             <p class="mb-0 small text-slate-400">
@@ -381,11 +449,9 @@ if ($result_agenda && mysqli_num_rows($result_agenda) > 0) {
         </div>
     </footer>
 
-    <!-- Dependency JS: jQuery & Bootstrap 5 Bundle -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.bundle.min.css"></script>
 
-    <!-- Custom Script -->
     <script src="script.js"></script>
 </body>
 </html>
